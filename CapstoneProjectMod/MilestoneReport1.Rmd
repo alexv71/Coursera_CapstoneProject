@@ -1,0 +1,315 @@
+---
+title: "Milestone Report 1: Coursera Data Science Capstone Project"
+author: "Aleksandr Voishchev"
+date: "March 19, 2016"
+output: html_document
+---
+
+```{r, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tm)
+library(ggplot2)
+library(RWeka)
+library(wordcloud)
+```
+
+## Synopsis
+
+The goal of this project is just to display some steps on the way to create the prediction algorithm. It contains exploratory analysis and goals for the eventual app and algorithm. 
+
+In this document I explain a simple data preprocessing and exploratory analysis of three data sets based on three sources of English text: blogs, news and twits.
+
+The motivation for this project is to:
+
+1. Demonstrate that you’ve downloaded the data and have successfully loaded it in.
+2. Create a basic report of summary statistics about the data sets.
+3. Report any interesting findings that you amassed so far.
+4. Get feedback on your plans for creating a prediction algorithm and Shiny app.
+
+## Exploratory analysis
+
+The three data sets downloaded from [here](https://eventing.coursera.org/api/redirectStrict/Cxy2CZvegdL6KefhC_Wkf5Vjg18uAhs7EcBeEtRqnp1zFMIdyd8d9Nbs72EECuP-AOL8Z7MaMDthqYkVKHeAQw.9xHPXcOQ4MthA6vow5nA7Q.-U3YMIgetznZDq-68oStgzxmoD0G_D5QnXR-3IdMJcuR0a7bocGsjOrOLwitFEKw8GLO4-IsSsbZdVfhm0oVsar2JEQLeiGPCnvvC3I3oasNJ7Y8FSJha7PGGGjkcxMXANv5TmsBVOPK2Dqi2uebJ7Fa4ApgksNxiN3KSkknzL7Q8b8ZWY63tb7KZcNz8TbqTFJhVuXRjynaDieFKCJAFi7Nvza05tGdX3LGHUBPS4kqnfMfYRTnjMPuXQmCg_jCiqjezGtF84azrscV6qhNsVffU2SqZmMvHR6H-8HSR7TPl8BsOeShXf0onzrXwjnIXQy0eOB9HdBOnOk1t43tZrVqqAv_ziFEPfbbPVU62GBTaZxFGgbkBYeQDberSMWBsl6rEhQHt-lmg4BA0nnNI3ArN0dFxnnUj7IC7mLGVz0) and contain collection of large text datasets from various sources.
+
+Because the text style of this sources can be different I think that the best method to make an exploratory analysis is combine the subsamples of all three texts and process it as one.
+
+First of all let's calcalate the simple statistics of this three data sets.
+
+```{r echo=FALSE, warning=FALSE}
+# Load the Blogs, News and Twitter data
+blogsFH<-file("./data/en_US/en_US.blogs.txt", open="rb")
+blogsData<-readLines(blogsFH,encoding="UTF-8")
+close(blogsFH)
+blogsStat <- c(length(blogsData), mean(nchar(blogsData)), 
+               length(unique(unlist(strsplit(blogsData, '[ ]')))))
+
+newsFH<-file("./data/en_US/en_US.news.txt", open="rb")
+newsData<-readLines(newsFH,encoding="UTF-8")
+close(newsFH)
+newsStat <- c(length(newsData), mean(nchar(newsData)), 
+               length(unique(unlist(strsplit(newsData, '[ ]')))))
+
+twitterFH<-file("./data/en_US/en_US.twitter.txt", open="rb")
+twitterData<-readLines(twitterFH,encoding="UTF-8")
+close(twitterFH)
+twitterStat <- c(length(twitterData), mean(nchar(twitterData)), 
+               length(unique(unlist(strsplit(twitterData, '[ ]')))))
+
+# Simple statistics
+allStat <- data.frame(blogsStat, newsStat, twitterStat)
+rownames(allStat) <- c("Lines", "Average words per line", "Unique words")
+colnames(allStat) <- c("Blogs", "News", "Twits")
+print(allStat, digits=2)
+
+```
+
+As you can see, the statistics of these texts is different. The biggest text is from twitter source and it contain most unique words. Otherwise, news contain least unique words. This is logical, because the news are written in the more official language style. And style of blogs can be consider as "between news and tweets".
+
+At the second step is make the cobined sample, because the source text is huge. This is a simple subsampling, just take a 1000 random lines from all three texts.
+
+Next step is create text *corpus* using **tm** R package and do some cleaning procedures.
+
+Further step is create sorted lists of unigrams, bigrams and trigrams and analyse it. It need to use **RWeka** package.
+
+```{r echo=FALSE, warning=FALSE}
+# Create common sample from all sources
+set.seed(1234)
+blogsSample <- sample(blogsData, 1000, replace = FALSE)
+newsSample <- sample(newsData, 1000, replace = FALSE)
+twitterSample <- sample(twitterData, 1000, replace = FALSE)
+sampleData <- c(blogsSample, newsSample, twitterSample)
+
+# Free memory
+rm(blogsData, newsData, twitterData)
+rm(blogsSample, newsSample, twitterSample)
+
+# Create a corpus
+sampleCorpus <- Corpus(VectorSource(sampleData))
+
+# Clean a corpus
+sampleCorpus <- tm_map(sampleCorpus, removeWords, stopwords("english")) 
+sampleCorpus <- tm_map(sampleCorpus, removePunctuation) 
+sampleCorpus <- tm_map(sampleCorpus, removeNumbers) 
+sampleCorpus <- tm_map(sampleCorpus, stripWhitespace) 
+sampleCorpus <- tm_map(sampleCorpus, stemDocument, language = "english")
+sampleCorpus <- tm_map(sampleCorpus, PlainTextDocument)
+sampleCorpus <- tm_map(sampleCorpus, content_transformer(tolower)) 
+
+# Create a document term matrix and process a unigram
+dtm1 <- DocumentTermMatrix(sampleCorpus)
+unigram <- sort(colSums(as.matrix(dtm1)), decreasing = TRUE)
+unigramTop15 <- head(unigram, 15)
+
+# Create a document term matrix and process a bigram
+BigramTokenizer <- function(x) RWeka::NGramTokenizer(x, Weka_control(min=2,max=2))
+dtm2 <- DocumentTermMatrix(sampleCorpus, control = list(tokenize = BigramTokenizer))
+bigram <- sort(colSums(as.matrix(dtm2)), decreasing = TRUE)
+bigramTop15 <- head(bigram, 15)
+
+# Create a document term matrix and process a trigram
+TrigramTokenizer <- function(x) RWeka::NGramTokenizer(x, Weka_control(min=3,max=3))
+dtm3 <- DocumentTermMatrix(sampleCorpus, control = list(tokenize = TrigramTokenizer))
+trigram <- sort(colSums(as.matrix(dtm3)), decreasing = TRUE)
+trigramTop15 <- head(trigram, 15)
+```
+
+Let's look to the unigram frequency distribution (TOP 20):
+
+```{r echo=FALSE, warning=FALSE}
+# Plot the unigrams frequency distribution
+ggplot(data.frame(unigram=names(unigram), freq=unigram)[1:20,], aes(x=unigram, y=freq)) + 
+        geom_bar(fill="Black", stat="Identity") + xlab("Unigrams") + ylab("Frequency")
+```
+
+And to the bigram frequency distribution (TOP 20):
+
+```{r echo=FALSE, warning=FALSE}
+# Plot the bigrams frequency distribution
+ggplot(data.frame(bigram=names(bigram), freq=bigram)[1:20,], aes(x=bigram, y=freq)) + 
+        geom_bar(stat="Identity", fill="Black") + theme(axis.text.x = element_text(angle=45, hjust=1)) + 
+        xlab("Bigrams") + ylab("Frequency")
+```
+
+And to the trigram frequency distribution (TOP 20):
+
+```{r echo=FALSE, warning=FALSE}
+# Plot the trigrams frequency distribution
+ggplot(data.frame(trigram=names(trigram), freq=trigram)[1:20,], aes(x=trigram, y=freq)) + 
+        geom_bar(stat="Identity", fill="Black") + theme(axis.text.x = element_text(angle=45, hjust=1)) + 
+        xlab("Trigrams") + ylab("Frequency")
+```
+
+And words cloud for the unigrams (unsing **wordcloud** package) as well:
+
+```{r echo=FALSE, warning=FALSE}
+# Plot the same wordclouds
+set.seed(2571)
+wordcloud(names(unigram), unigram, max.words=100, scale=c(5, .1), colors=brewer.pal(6, "Dark2"))   
+```
+
+And words cloud for the bigrams:
+
+```{r echo=FALSE, warning=FALSE}
+wordcloud(names(bigram), bigram, max.words=100, scale=c(5, .1), colors=brewer.pal(6, "Dark2"))   
+```
+
+And words cloud for the trigrams:
+
+```{r echo=FALSE, warning=FALSE}
+wordcloud(names(trigram), trigram, max.words=100, scale=c(5, .1), colors=brewer.pal(6,"Dark2"))
+```
+
+As you can see, the plots above give a fairly clear picture of the unigram, bigram and trigram distribution, that can help in model building and creating train and test datasets.
+
+```{r echo=FALSE, warning=FALSE}
+# How many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%?
+CalcCoverage <- function (dtm, percentage) {
+        words <- sort(colSums(as.matrix(dtm)), decreasing=TRUE)
+        allwords <- length(dtm$i)
+        sum = 0
+        for(i in 1:allwords)
+        {
+                sum <- sum + words[[i]]
+                if(sum >= (percentage * allwords)) break
+        }
+        i        
+}
+
+# Estimate coverage for 0.5 or 0.9
+cov50 <- CalcCoverage(dtm1, 0.5)
+cov90 <- CalcCoverage(dtm1, 0.9)
+```
+
+One of the questions to consider is how many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%?
+
+Coverage 50% is `r cov50` words.
+
+Coverage 90% is `r cov90` words.
+
+## Next steps
+
+* Current sampling is not good. May be it will be better to use a percentage instead.
+* The next task is measuring performance of the Shiny app server, because bigger sample can take a huge memory and processor time.
+* More accurate cleaning is necessary, including removing non-Latin symbols.
+* It is necessary to develop an approach for the creating training and test set.
+* It remains an open question: how many of the words come from foreign languages?
+
+## Appendix
+
+#### System info
+
+* OS Windows 7 x64
+* R version 3.2.4
+* R studio version 0.99.879
+
+#### Source code
+
+```{r eval=FALSE}
+library(tm)
+library(ggplot2)
+library(RWeka)
+library(wordcloud)
+
+# Load the Blogs, News and Twitter data
+blogsFH<-file("./data/en_US/en_US.blogs.txt", open="rb")
+blogsData<-readLines(blogsFH,encoding="UTF-8")
+close(blogsFH)
+blogsStat <- c(length(blogsData), mean(nchar(blogsData)), 
+               length(unique(unlist(strsplit(blogsData, '[ ]')))))
+
+newsFH<-file("./data/en_US/en_US.news.txt", open="rb")
+newsData<-readLines(newsFH,encoding="UTF-8")
+close(newsFH)
+newsStat <- c(length(newsData), mean(nchar(newsData)), 
+               length(unique(unlist(strsplit(newsData, '[ ]')))))
+
+twitterFH<-file("./data/en_US/en_US.twitter.txt", open="rb")
+twitterData<-readLines(twitterFH,encoding="UTF-8")
+close(twitterFH)
+twitterStat <- c(length(twitterData), mean(nchar(twitterData)), 
+               length(unique(unlist(strsplit(twitterData, '[ ]')))))
+
+# Simple statistics
+allStat <- data.frame(blogsStat, newsStat, twitterStat)
+rownames(allStat) <- c("Lines", "Average words per line", "Unique words")
+colnames(allStat) <- c("Blogs", "News", "Twits")
+print(allStat, digits=2)
+
+# Create common sample from all sources
+set.seed(1234)
+blogsSample <- sample(blogsData, 1000, replace = FALSE)
+newsSample <- sample(newsData, 1000, replace = FALSE)
+twitterSample <- sample(twitterData, 1000, replace = FALSE)
+sampleData <- c(blogsSample, newsSample, twitterSample)
+
+# Free memory
+rm(blogsData, newsData, twitterData)
+rm(blogsSample, newsSample, twitterSample)
+
+# Create a corpus
+sampleCorpus <- Corpus(VectorSource(sampleData))
+
+# Clean a corpus
+sampleCorpus <- tm_map(sampleCorpus, removeWords, stopwords("english")) 
+sampleCorpus <- tm_map(sampleCorpus, removePunctuation) 
+sampleCorpus <- tm_map(sampleCorpus, removeNumbers) 
+sampleCorpus <- tm_map(sampleCorpus, stripWhitespace) 
+sampleCorpus <- tm_map(sampleCorpus, stemDocument, language = "english")
+sampleCorpus <- tm_map(sampleCorpus, PlainTextDocument)
+sampleCorpus <- tm_map(sampleCorpus, content_transformer(tolower)) 
+
+# Create a document term matrix and process a unigram
+dtm1 <- DocumentTermMatrix(sampleCorpus)
+unigram <- sort(colSums(as.matrix(dtm1)), decreasing = TRUE)
+unigramTop15 <- head(unigram, 15)
+
+# Create a document term matrix and process a bigram
+BigramTokenizer <- function(x) RWeka::NGramTokenizer(x, Weka_control(min=2,max=2))
+dtm2 <- DocumentTermMatrix(sampleCorpus, control = list(tokenize = BigramTokenizer))
+bigram <- sort(colSums(as.matrix(dtm2)), decreasing = TRUE)
+bigramTop15 <- head(bigram, 15)
+
+# Create a document term matrix and process a trigram
+TrigramTokenizer <- function(x) RWeka::NGramTokenizer(x, Weka_control(min=3,max=3))
+dtm3 <- DocumentTermMatrix(sampleCorpus, control = list(tokenize = TrigramTokenizer))
+trigram <- sort(colSums(as.matrix(dtm3)), decreasing = TRUE)
+trigramTop15 <- head(trigram, 15)
+
+# Plot the unigrams frequency distribution
+ggplot(data.frame(unigram=names(unigram), freq=unigram)[1:20,], aes(x=unigram, y=freq)) + 
+        geom_bar(fill="Black", stat="Identity") + xlab("Unigrams") + ylab("Frequency")
+
+# Plot the bigrams frequency distribution
+ggplot(data.frame(bigram=names(bigram), freq=bigram)[1:20,], aes(x=bigram, y=freq)) + 
+        geom_bar(stat="Identity", fill="Black") + theme(axis.text.x = element_text(angle=45, hjust=1)) + 
+        xlab("Bigrams") + ylab("Frequency")
+
+# Plot the trigrams frequency distribution
+ggplot(data.frame(trigram=names(trigram), freq=trigram)[1:20,], aes(x=trigram, y=freq)) + 
+        geom_bar(stat="Identity", fill="Black") + theme(axis.text.x = element_text(angle=45, hjust=1)) + 
+        xlab("Trigrams") + ylab("Frequency")
+
+# Plot the same wordclouds
+set.seed(2571)
+wordcloud(names(unigram), unigram, max.words=100, scale=c(5, .1), colors=brewer.pal(6, "Dark2"))   
+wordcloud(names(bigram), bigram, max.words=100, scale=c(5, .1), colors=brewer.pal(6, "Dark2"))   
+wordcloud(names(trigram), trigram, max.words=100, scale=c(5, .1), colors=brewer.pal(6,"Dark2"))
+
+# How many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%?
+CalcCoverage <- function (dtm, percentage) {
+        words <- sort(colSums(as.matrix(dtm)), decreasing=TRUE)
+        allwords <- length(dtm$i)
+        sum = 0
+        for(i in 1:allwords)
+        {
+                sum <- sum + words[[i]]
+                if(sum >= (percentage * allwords)) break
+        }
+        i        
+}
+
+# Estimate coverage for 0.5 and 0.9
+cov50 <- CalcCoverage(dtm1, 0.5)
+cov90 <- CalcCoverage(dtm1, 0.9)
+```
+
